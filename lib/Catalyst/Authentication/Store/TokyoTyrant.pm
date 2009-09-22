@@ -2,10 +2,104 @@ package Catalyst::Authentication::Store::TokyoTyrant;
 
 use warnings;
 use strict;
+use TokyoTyrant;
+use Catalyst::Authentication::Store::TokyoTyrant::User;
+use Data::Dumper;
 
 our $AUTHORITY = 'cpan:CRAFTWORK';
 our $VERSION = '0.001';
 $VERSION = eval $VERSION;
+
+sub new {
+    my ( $class, $config, $app, $realm ) = @_;
+    my $self = bless $config, $class;
+    return $self;
+}
+
+sub _rdb {
+    my ( $self, $c ) = @_;
+
+    my $index = int rand @{ $self->{'servers'} };
+    my $socket = $self->{'servers'}[$index];
+#   die Dumper $socket;
+
+    my $connections = $self->{'_connections'};
+    my $rdb = $connections->{$socket};
+
+    # first time
+    unless ( $rdb ) {
+        $c->log->debug(q/The storage is not connected yet.  Trying to connect./);
+        $rdb = $connections->{$socket} = $self->_connect($socket);
+    }
+    # auto reconnect
+    unless ( $rdb->stat ) {
+        $c->log->debug(q/The connection is not available.  Trying to reconnect./);
+        $rdb = $connections->{$socket} = $self->_connect($socket, $rdb);
+    }
+
+    return $rdb;
+}
+
+sub _connect {
+    my ( $self, $socket, $rdb ) = @_;
+    $rdb ||= TokyoTyrant::RDBTBL->new;
+    unless ( $rdb->open(@$socket{qw/host port/}) ) {
+        Catalyst::Exception->throw(sprintf '%s, %s:%s',
+            $rdb->errmsg($rdb->ecode), @$socket{qw/host port/});
+    }
+    return $rdb;
+}
+
+sub find_user {
+    my ($self, $authinfo, $c) = @_;
+
+    my $rdb = $self->_rdb($c);
+
+    my $qry = TokyoTyrant::RDBQRY->new( $rdb );
+    while (my ($column, $value) = each %$authinfo) {
+        my $cond = $value =~ /^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
+        $qry->addcond( $column, $cond, $value );
+    }
+    $qry->setlimit(1);
+    my $keys = $qry->search;
+    my $user = $rdb->get(@$keys);
+    my $user_key = $self->{'user_key'};
+
+    unless ( exists $user->{$user_key} && length $user->{$user_key} ) {
+        return;
+    }
+
+    Catalyst::Authentication::Store::TokyoTyrant::User->new($self, $user);
+}
+
+sub for_session {
+    my ( $self, $c, $user ) = @_;
+    return $user->id;
+}
+
+sub from_session {
+    my ( $self, $c, $frozen ) = @_;
+
+    my $rdb = $self->_rdb($c);
+
+    my $qry = TokyoTyrant::RDBQRY->new( $rdb );
+    my $cond = $frozen =~ /^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
+    $qry->addcond( $self->{'user_key'}, $cond, $frozen );
+    $qry->setlimit(1);
+    my $keys = $qry->search;
+    my $user = $rdb->get(@$keys);
+    my $user_key = $self->{'user_key'};
+
+    unless ( exists $user->{$user_key} && length $user->{$user_key} ) {
+        return;
+    }
+
+    Catalyst::Authentication::Store::TokyoTyrant::User->new($self, $user);
+}
+
+sub user_supports {
+    return;
+}
 
 1;
 
