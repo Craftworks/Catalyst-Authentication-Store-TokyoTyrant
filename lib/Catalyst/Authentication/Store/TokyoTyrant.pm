@@ -4,7 +4,6 @@ use warnings;
 use strict;
 use TokyoTyrant;
 use Catalyst::Authentication::Store::TokyoTyrant::User;
-use Data::Dumper;
 
 our $AUTHORITY = 'cpan:CRAFTWORK';
 our $VERSION = '0.001';
@@ -21,7 +20,6 @@ sub _rdb {
 
     my $index = int rand @{ $self->{'servers'} };
     my $socket = $self->{'servers'}[$index];
-#   die Dumper $socket;
 
     my $connections = $self->{'_connections'};
     my $rdb = $connections->{$socket};
@@ -57,8 +55,8 @@ sub find_user {
 
     my $qry = TokyoTyrant::RDBQRY->new( $rdb );
     while (my ($column, $value) = each %$authinfo) {
-        my $cond = $value =~ /^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
-        $qry->addcond( $column, $cond, $value );
+        my $cond = $value =~ !/^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
+        $qry->addcond( $column, $qry->$cond, $value );
     }
     $qry->setlimit(1);
     my $keys = $qry->search;
@@ -84,7 +82,7 @@ sub from_session {
 
     my $qry = TokyoTyrant::RDBQRY->new( $rdb );
     my $cond = $frozen =~ /^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
-    $qry->addcond( $self->{'user_key'}, $cond, $frozen );
+    $qry->addcond( $self->{'user_key'}, $qry->$cond, $frozen );
     $qry->setlimit(1);
     my $keys = $qry->search;
     my $user = $rdb->get(@$keys);
