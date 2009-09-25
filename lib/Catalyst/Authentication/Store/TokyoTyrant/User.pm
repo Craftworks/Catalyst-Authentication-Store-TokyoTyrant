@@ -2,9 +2,9 @@ package Catalyst::Authentication::Store::TokyoTyrant::User;
 
 use strict;
 use warnings;
+use Encode;
 use base 'Catalyst::Authentication::User';
 use base 'Class::Accessor::Fast';
-use Data::Dumper;
 
 __PACKAGE__->mk_accessors(qw/config _user _roles/);
 
@@ -12,6 +12,12 @@ sub new {
     my ( $class, $config, $user ) = @_;
 
     return unless $user;
+
+    if ( $config->{'decode_utf8'} ) {
+        for ( values %$user ) {
+            $_ = decode_utf8($_);
+        }
+    }
 
     my $self = {
         'config' => $config,
