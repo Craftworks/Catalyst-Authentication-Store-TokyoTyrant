@@ -1,16 +1,20 @@
 package Catalyst::Authentication::Store::TokyoTyrant;
 
-use warnings;
 use strict;
+use warnings;
+use base 'Class::Data::Inheritable';
 use TokyoTyrant;
-use Catalyst::Authentication::Store::TokyoTyrant::User;
 
 our $AUTHORITY = 'cpan:CRAFTWORK';
 our $VERSION = '0.001';
 $VERSION = eval $VERSION;
 
+__PACKAGE__->mk_classdata('_connections' => +{});
+
 sub new {
     my ( $class, $config, $app, $realm ) = @_;
+    my $user_class = $config->{'user_class'} ||= "$class\::User";
+    eval "require $user_class";
     my $self = bless $config, $class;
     return $self;
 }
@@ -21,7 +25,7 @@ sub _rdb {
     my $index = int rand @{ $self->{'servers'} };
     my $socket = $self->{'servers'}[$index];
 
-    my $connections = $self->{'_connections'};
+    my $connections = $self->_connections;
     my $rdb = $connections->{$socket};
 
     # first time
@@ -41,7 +45,7 @@ sub _rdb {
 sub _connect {
     my ( $self, $socket, $rdb ) = @_;
     $rdb ||= TokyoTyrant::RDBTBL->new;
-    unless ( $rdb->open(@$socket{qw/host port/}) ) {
+    unless ( $rdb->open(split ':', $socket) ) {
         Catalyst::Exception->throw(sprintf '%s, %s:%s',
             $rdb->errmsg($rdb->ecode), @$socket{qw/host port/});
     }
@@ -55,7 +59,7 @@ sub find_user {
 
     my $qry = TokyoTyrant::RDBQRY->new( $rdb );
     while (my ($column, $value) = each %$authinfo) {
-        my $cond = $value =~ !/^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
+        my $cond = $value =~ /^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
         $qry->addcond( $column, $qry->$cond, $value );
     }
     $qry->setlimit(1);
@@ -67,7 +71,7 @@ sub find_user {
         return;
     }
 
-    Catalyst::Authentication::Store::TokyoTyrant::User->new($self, $user);
+    $self->{'user_class'}->new($self, $user);
 }
 
 sub for_session {
@@ -78,21 +82,15 @@ sub for_session {
 sub from_session {
     my ( $self, $c, $frozen ) = @_;
 
-    my $rdb = $self->_rdb($c);
-
-    my $qry = TokyoTyrant::RDBQRY->new( $rdb );
-    my $cond = $frozen =~ /^\d+$/o ? 'QCNUMEQ' : 'QCSTREQ';
-    $qry->addcond( $self->{'user_key'}, $qry->$cond, $frozen );
-    $qry->setlimit(1);
-    my $keys = $qry->search;
-    my $user = $rdb->get(@$keys);
+    my $rdb  = $self->_rdb($c);
+    my $user = $rdb->get($frozen);
     my $user_key = $self->{'user_key'};
 
     unless ( exists $user->{$user_key} && length $user->{$user_key} ) {
         return;
     }
 
-    Catalyst::Authentication::Store::TokyoTyrant::User->new($self, $user);
+    $self->{'user_class'}->new($self, $user);
 }
 
 sub user_supports {
